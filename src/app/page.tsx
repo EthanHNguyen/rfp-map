@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type Opportunity = {
   id: string;
@@ -47,7 +47,6 @@ type TilePayload = {
 };
 
 type Scope = { agency?: string; theme?: string; label: string };
-type PointerPoint = { x: number; y: number };
 
 function formatMoney(value: number) {
   if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(value >= 10_000_000_000 ? 0 : 1)}B`;
@@ -76,21 +75,13 @@ function tileFor(payload: TilePayload | null, level: number, scope: Scope[]) {
   return payload.tiles[tileKey(level, agency, theme)] ?? payload.tiles[tileKey(level, agency)] ?? payload.tiles[tileKey(1)];
 }
 
-function distance(a: PointerPoint, b: PointerPoint) {
-  return Math.hypot(a.x - b.x, a.y - b.y);
-}
-
 export default function Home() {
   const [payload, setPayload] = useState<TilePayload | null>(null);
   const [level, setLevel] = useState(1);
   const [scope, setScope] = useState<Scope[]>([]);
   const [selected, setSelected] = useState<MapNode | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
   const [showHint, setShowHint] = useState(true);
-  const lastTouchDrag = useRef<PointerPoint | null>(null);
-  const lastTouchPinch = useRef<number | null>(null);
-  const lastZoomAction = useRef(0);
 
   useEffect(() => {
     fetch("data/map-tiles.json")
@@ -100,6 +91,10 @@ export default function Home() {
 
   const tile = tileFor(payload, level, scope);
   const nodes = useMemo(() => tile?.nodes ?? [], [tile]);
+  const rankedNodes = useMemo(
+    () => [...nodes].sort((a, b) => b.marketValue - a.marketValue || b.count - a.count || a.label.localeCompare(b.label)),
+    [nodes],
+  );
   const scopeLabel = scope.map((item) => item.label).join(" → ");
 
   function markInteracted() {
@@ -109,7 +104,6 @@ export default function Home() {
   function drill(node: MapNode) {
     markInteracted();
     setSelected(null);
-    setPan({ x: 0, y: 0 });
     if (level === 1 && node.agency) {
       setScope([{ agency: node.agency, label: node.label }]);
       setLevel(2);
@@ -130,7 +124,6 @@ export default function Home() {
   function back() {
     markInteracted();
     setSelected(null);
-    setPan({ x: 0, y: 0 });
     setLevel((value) => {
       const next = Math.max(1, value - 1);
       setScope((items) => items.slice(0, Math.max(0, next - 1)));
@@ -142,53 +135,7 @@ export default function Home() {
     markInteracted();
     setSelected(null);
     setScope([]);
-    setPan({ x: 0, y: 0 });
     setLevel(1);
-  }
-
-  function zoom(delta: 1 | -1) {
-    const now = Date.now();
-    if (now - lastZoomAction.current < 550) return;
-    lastZoomAction.current = now;
-    if (delta < 0) back();
-  }
-
-  function handleTouchStart(event: React.TouchEvent<HTMLElement>) {
-    if (event.touches.length === 1) {
-      const touch = event.touches[0];
-      lastTouchDrag.current = { x: touch.clientX, y: touch.clientY };
-      lastTouchPinch.current = null;
-    }
-    if (event.touches.length === 2) {
-      const a = event.touches[0];
-      const b = event.touches[1];
-      lastTouchPinch.current = distance({ x: a.clientX, y: a.clientY }, { x: b.clientX, y: b.clientY });
-      lastTouchDrag.current = null;
-    }
-  }
-
-  function handleTouchMove(event: React.TouchEvent<HTMLElement>) {
-    event.preventDefault();
-    if (event.touches.length === 2) {
-      const a = event.touches[0];
-      const b = event.touches[1];
-      const next = distance({ x: a.clientX, y: a.clientY }, { x: b.clientX, y: b.clientY });
-      const prev = lastTouchPinch.current ?? next;
-      if (Math.abs(next - prev) > 34) {
-        markInteracted();
-        zoom(next > prev ? 1 : -1);
-        lastTouchPinch.current = next;
-      }
-      return;
-    }
-    if (event.touches.length === 1 && lastTouchDrag.current) {
-      const touch = event.touches[0];
-      const dx = touch.clientX - lastTouchDrag.current.x;
-      const dy = touch.clientY - lastTouchDrag.current.y;
-      if (Math.abs(dx) + Math.abs(dy) > 3) markInteracted();
-      setPan((value) => ({ x: value.x + dx, y: value.y + dy }));
-      lastTouchDrag.current = { x: touch.clientX, y: touch.clientY };
-    }
   }
 
   if (!tile) return <LoadingScreen />;
@@ -209,49 +156,53 @@ export default function Home() {
 
       <section
         aria-label="RFP map"
-        className="absolute inset-0 touch-none select-none overscroll-none pt-24"
-        style={{ WebkitUserSelect: "none", WebkitTouchCallout: "none", touchAction: "none" }}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={() => {
-          lastTouchDrag.current = null;
-          lastTouchPinch.current = null;
-        }}
+        className="absolute inset-x-0 bottom-0 top-24 select-none overflow-y-auto overscroll-contain px-3 pb-28 pt-2"
+        style={{ WebkitUserSelect: "none", WebkitTouchCallout: "none" }}
       >
-        <div className="absolute inset-0 transition-transform duration-200" style={{ transform: `translate(${pan.x}px, ${pan.y}px)` }}>
-          {nodes.map((node) => {
-            const size = level === 3 ? 62 : Math.min(148, 78 + Math.sqrt(node.count) * 12);
-            return (
+        {level === 3 ? (
+          <div className="mx-auto grid max-w-3xl gap-3">
+            {rankedNodes.map((node) => (
               <button
                 key={node.id}
                 type="button"
                 aria-label={node.label}
                 onClick={() => drill(node)}
-                className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-full border-2 border-white/45 text-center text-[12px] font-black text-white shadow-[0_24px_80px_rgba(0,0,0,0.65)] backdrop-blur-sm transition active:scale-95"
-                style={{
-                  left: `${node.x}%`,
-                  top: `${node.y}%`,
-                  width: size,
-                  height: size,
-                  background: "radial-gradient(circle at 35% 25%, rgba(255,255,255,0.45), rgba(52,211,153,0.9))",
-                }}
+                className="group rounded-[26px] border border-white/10 bg-white/[0.07] p-4 text-left shadow-[0_18px_60px_rgba(0,0,0,0.38)] backdrop-blur-sm transition active:scale-[0.99]"
               >
-                {level === 3 ? (
-                  <>
-                    <span className="text-lg leading-none">{formatMoney(node.marketValue)}</span>
-                    <span className="mt-1 text-[10px] font-black uppercase tracking-wide text-white/85">RFP</span>
-                  </>
-                ) : (
-                  <>
-                    <span className="max-w-[84%] truncate">{node.label}</span>
-                    <span className="text-xl leading-none">~{formatMoney(node.marketValue)}</span>
-                    <span className="max-w-[82%] truncate text-[10px] font-bold text-white/85">{node.count.toLocaleString()} opps</span>
-                  </>
-                )}
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="line-clamp-2 text-base font-black leading-snug text-white">{node.label}</p>
+                    <p className="mt-1 text-xs font-bold uppercase tracking-wide text-white/45">{node.opportunity?.agency ?? scopeLabel}</p>
+                  </div>
+                  <div className="shrink-0 rounded-2xl bg-emerald-300 px-3 py-2 text-sm font-black text-black">~{formatMoney(node.marketValue)}</div>
+                </div>
+                <p className="mt-3 text-xs font-bold text-emerald-100/70">Tap for details → SAM.gov</p>
               </button>
-            );
-          })}
-        </div>
+            ))}
+          </div>
+        ) : (
+          <div className="mx-auto grid max-w-3xl grid-cols-2 gap-3 sm:grid-cols-3">
+            {rankedNodes.map((node, index) => (
+              <button
+                key={node.id}
+                type="button"
+                aria-label={node.label}
+                onClick={() => drill(node)}
+                className="relative flex aspect-square min-h-[148px] flex-col justify-between overflow-hidden rounded-[34px] border border-emerald-200/25 bg-emerald-300/[0.13] p-4 text-left shadow-[0_22px_70px_rgba(0,0,0,0.42)] backdrop-blur-sm transition active:scale-[0.98]"
+              >
+                <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_28%_18%,rgba(255,255,255,0.28),transparent_34%),radial-gradient(circle_at_72%_85%,rgba(16,185,129,0.34),transparent_42%)]" />
+                <div className="relative z-10 flex items-start justify-between gap-2">
+                  <span className="rounded-full bg-black/35 px-2 py-1 text-[10px] font-black text-white/55">#{index + 1}</span>
+                  <span className="rounded-full bg-white/90 px-2 py-1 text-[10px] font-black text-black">{node.count.toLocaleString()} opps</span>
+                </div>
+                <div className="relative z-10">
+                  <p className="line-clamp-2 text-[13px] font-black uppercase tracking-wide text-white">{node.label}</p>
+                  <p className="mt-2 text-2xl font-black leading-none text-emerald-100">~{formatMoney(node.marketValue)}</p>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
       </section>
 
       {showHint ? (
