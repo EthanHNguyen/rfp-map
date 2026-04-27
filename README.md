@@ -1,36 +1,178 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# RFP Map
 
-## Getting Started
+A mobile-first map for exploring live federal contract opportunities from SAM.gov.
 
-First, run the development server:
+RFP Map turns the public SAM.gov Contract Opportunities bulk feed into a semantic market map. Instead of starting with a search form, you start with the market: agencies as regions, work categories as neighborhoods, and individual RFPs as tappable pins.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+<p align="center">
+  <strong>Federal Market → Agency → Category → RFP → SAM.gov</strong>
+</p>
+
+## Why this exists
+
+SAM.gov is the official source of federal contract opportunities, but it is hard to explore casually. It works like a database. RFP Map makes it feel like a map.
+
+The goal is not to replace GovWin, HigherGov, GovTribe, or SAM.gov. The goal is simpler:
+
+> Let a curious user open the app and understand what the federal government is trying to buy right now.
+
+## Demo flow
+
+1. Open the **Federal Market** overview.
+2. Tap an agency region, e.g. `Veterans Affairs`.
+3. Tap a market category, e.g. `Construction`.
+4. Tap an RFP pin.
+5. Open the original SAM.gov source record.
+
+## Product principles
+
+- **Map first.** The interface starts with exploration, not search.
+- **Mobile first.** One-thumb drilldown: tap region, tap market, tap RFP.
+- **No token in the browser.** The checked-in demo uses static precomputed tiles.
+- **Source linked.** Every RFP points back to SAM.gov.
+- **Fast by default.** The browser loads compact map tiles instead of the full bulk CSV.
+- **Approximate value is enough.** Dollar amounts are market-gravity estimates, not official award values.
+
+## Data
+
+RFP Map is built from the public SAM.gov Contract Opportunities bulk CSV:
+
+```text
+https://s3.amazonaws.com/falextracts/Contract%20Opportunities/datagov/ContractOpportunitiesFullCSV.csv
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Current static snapshot:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- **73,946** active/open opportunity rows
+- **187** precomputed map tiles
+- Static tile payload: `public/data/map-tiles.json`
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+The raw CSV and generated local development payloads are intentionally not committed. Only the compact static map tiles are checked in so the app can be hosted permanently on static infrastructure.
 
-## Learn More
+## Architecture
 
-To learn more about Next.js, take a look at the following resources:
+```text
+SAM.gov bulk CSV
+        ↓
+scripts/ingest-sam.py
+        ↓
+local normalized data in data/sam/  ignored by git
+        ↓
+precomputed compact map tiles
+        ↓
+public/data/map-tiles.json
+        ↓
+Next.js static export
+        ↓
+GitHub Pages / any static host
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Tech stack
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- Next.js 16
+- React 19
+- TypeScript
+- Tailwind CSS
+- Static export for long-lived hosting
 
-## Deploy on Vercel
+## Local development
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+npm install
+npm run dev
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Open:
+
+```text
+http://localhost:3000
+```
+
+## Build static site
+
+```bash
+npm run build
+```
+
+The exported site is written to:
+
+```text
+out/
+```
+
+Serve it locally:
+
+```bash
+npm run serve
+```
+
+## Refreshing data
+
+The repo includes an ingestion script for rebuilding local SAM.gov data:
+
+```bash
+npm run ingest:sam
+```
+
+The bulk CSV is large, so raw/generated local data stays under:
+
+```text
+data/sam/
+```
+
+and is ignored by git.
+
+If you regenerate map tiles, copy the compact tile file into:
+
+```text
+public/data/map-tiles.json
+```
+
+before rebuilding the static site.
+
+## Deployment
+
+This repo includes a GitHub Pages workflow:
+
+```text
+.github/workflows/pages.yml
+```
+
+On every push to `main`, GitHub Actions runs:
+
+```bash
+npm ci
+npm run build
+```
+
+and deploys the `out/` directory to GitHub Pages.
+
+After creating the GitHub repo, enable Pages with **GitHub Actions** as the source:
+
+```text
+Settings → Pages → Build and deployment → Source: GitHub Actions
+```
+
+Then the app can live indefinitely at the repo's Pages URL.
+
+## What this is not
+
+RFP Map is not:
+
+- a capture-management CRM
+- a GovWin replacement
+- a proposal workflow system
+- a pricing intelligence product
+- a SAM.gov API proxy
+
+Those may be useful products, but they are different products.
+
+## Related idea
+
+**Uncle Sam's Cart** is a separate concept: a playful, media-friendly feed of weird things the government is buying. That should live in a separate repo.
+
+RFP Map stays focused on the map.
+
+## License
+
+MIT

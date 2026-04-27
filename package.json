@@ -5,8 +5,9 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
+    "serve": "npx serve@latest out",
+    "lint": "eslint",
+    "ingest:sam": "python3 scripts/ingest-sam.py"
   },
   "dependencies": {
     "next": "16.2.4",
