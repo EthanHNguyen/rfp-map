@@ -80,7 +80,6 @@ export default function Home() {
   const [level, setLevel] = useState(1);
   const [scope, setScope] = useState<Scope[]>([]);
   const [selected, setSelected] = useState<MapNode | null>(null);
-  const [sheetOpen, setSheetOpen] = useState(false);
   const [showHint, setShowHint] = useState(true);
 
   useEffect(() => {
@@ -109,15 +108,14 @@ export default function Home() {
       setLevel(2);
       return;
     }
+    if (node.opportunity) {
+      setSelected(node);
+      return;
+    }
     if (level === 2 && node.theme) {
       const agencyScope = scope.find((item) => item.agency);
       setScope([...(agencyScope ? [agencyScope] : []), { theme: node.theme, label: node.label }]);
       setLevel(3);
-      return;
-    }
-    if (node.opportunity) {
-      setSelected(node);
-      setSheetOpen(false);
     }
   }
 
@@ -166,7 +164,10 @@ export default function Home() {
                 key={node.id}
                 type="button"
                 aria-label={node.label}
-                onClick={() => drill(node)}
+                onClick={() => {
+                  markInteracted();
+                  setSelected(node);
+                }}
                 className="group rounded-[26px] border border-white/10 bg-white/[0.07] p-4 text-left shadow-[0_18px_60px_rgba(0,0,0,0.38)] backdrop-blur-sm transition active:scale-[0.99]"
               >
                 <div className="flex items-start justify-between gap-3">
@@ -215,7 +216,7 @@ export default function Home() {
         <button disabled={level === 1} onClick={back} className="absolute bottom-[max(1.15rem,env(safe-area-inset-bottom))] right-3 z-30 h-[68px] w-[68px] rounded-[24px] border border-white/15 bg-white text-2xl font-black text-black shadow-2xl disabled:bg-white/10 disabled:text-white/25">−</button>
       ) : null}
 
-      {selected?.opportunity ? <BottomSheet node={selected} open={sheetOpen} setOpen={setSheetOpen} onClose={() => setSelected(null)} /> : null}
+      {selected?.opportunity ? <OpportunityDetail node={selected} onClose={() => setSelected(null)} /> : null}
     </main>
   );
 }
@@ -234,31 +235,52 @@ function LoadingScreen() {
   );
 }
 
-function BottomSheet({ node, open, setOpen, onClose }: { node: MapNode; open: boolean; setOpen: (open: boolean) => void; onClose: () => void }) {
+function OpportunityDetail({ node, onClose }: { node: MapNode; onClose: () => void }) {
   const item = node.opportunity;
   if (!item) return null;
 
   return (
-    <section className={`absolute inset-x-0 bottom-0 z-40 rounded-t-[28px] border border-white/10 bg-[#101318]/95 p-4 pb-6 shadow-[0_-24px_80px_rgba(0,0,0,0.55)] backdrop-blur-2xl transition-transform duration-300 ${open ? "translate-y-0" : "translate-y-[36%]"}`}>
-      <button aria-label={open ? "Collapse details" : "Expand details"} onClick={() => setOpen(!open)} className="mx-auto mb-3 block h-6 w-20 rounded-full before:mx-auto before:block before:h-1.5 before:w-12 before:rounded-full before:bg-white/25" />
-      <div className="flex items-start gap-3">
-        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-400 text-lg font-black text-black">{item.naics.slice(0, 2) || "•"}</div>
-        <div className="min-w-0 flex-1">
-          <p className="text-xs text-white/55">{item.agency}</p>
-          <h2 className="line-clamp-2 text-lg font-bold leading-snug">{item.title}</h2>
-          <p className="mt-1 text-sm text-amber-200">{dueText(item.responseDeadline)} · ~{formatMoney(node.marketValue)} est.</p>
+    <section className="absolute inset-0 z-50 overflow-hidden bg-[#07090d] text-white">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_10%,rgba(16,185,129,0.2),transparent_32%),linear-gradient(rgba(255,255,255,0.045)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.045)_1px,transparent_1px)] bg-[size:100%_100%,42px_42px,42px_42px]" />
+      <div className="relative z-10 flex h-full flex-col">
+        <header className="shrink-0 px-4 pt-[max(1rem,env(safe-area-inset-top))]">
+          <div className="flex items-center justify-between gap-3">
+            <button onClick={onClose} className="h-12 w-12 rounded-full border border-white/10 bg-white/10 text-2xl font-black shadow-xl active:scale-95">‹</button>
+            <p className="min-w-0 flex-1 truncate text-center text-xs font-black uppercase tracking-[0.22em] text-emerald-200/80">Opportunity</p>
+            <button onClick={onClose} aria-label="Close opportunity" className="h-12 w-12 rounded-full border border-white/10 bg-white/10 text-2xl font-black shadow-xl active:scale-95">×</button>
+          </div>
+        </header>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-4">
+          <article className="mx-auto max-w-2xl rounded-[34px] border border-white/10 bg-white/[0.07] p-5 shadow-[0_24px_90px_rgba(0,0,0,0.55)] backdrop-blur-xl">
+            <div className="flex items-start gap-3">
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-emerald-300 text-xl font-black text-black">{item.naics.slice(0, 2) || "•"}</div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-bold uppercase tracking-wide text-white/45">{item.agency}</p>
+                <h2 className="mt-2 text-2xl font-black leading-tight tracking-tight">{item.title}</h2>
+                <p className="mt-3 text-sm font-bold text-amber-200">{dueText(item.responseDeadline)} · ~{formatMoney(node.marketValue)} est.</p>
+              </div>
+            </div>
+
+            <a href={item.url} target="_blank" rel="noreferrer" className="mt-5 flex h-14 items-center justify-center rounded-2xl bg-white text-base font-black text-black shadow-xl active:scale-[0.99]">Open on SAM.gov</a>
+
+            <div className="mt-5 grid gap-2 text-sm">
+              <Info label="Office" value={item.office} />
+              <Info label="Notice type" value={item.noticeType} />
+              <Info label="NAICS" value={item.naics} />
+              <Info label="Set-aside" value={item.setAside} />
+              <Info label="Place" value={item.placeOfPerformance} />
+              <Info label="Posted" value={item.postedDate} />
+              <Info label="Deadline" value={item.responseDeadline} />
+            </div>
+
+            <div className="mt-5 rounded-[24px] bg-black/25 p-4">
+              <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-white/40">Description</p>
+              <p className="text-sm leading-6 text-white/75">{item.description}</p>
+            </div>
+          </article>
         </div>
-        <button onClick={onClose} className="h-11 w-11 rounded-full bg-white/10 text-xl active:scale-95">×</button>
       </div>
-      <a href={item.url} target="_blank" rel="noreferrer" className="mt-4 flex h-14 items-center justify-center rounded-2xl bg-white text-base font-black text-black">Open SAM.gov</a>
-      {open ? (
-        <div className="mt-4 grid gap-2 text-sm">
-          <Info label="Office" value={item.office} />
-          <Info label="NAICS" value={item.naics} />
-          <Info label="Set-aside" value={item.setAside} />
-          <p className="rounded-2xl bg-white/[0.06] px-4 py-3 leading-6 text-white/70">{item.description}</p>
-        </div>
-      ) : null}
     </section>
   );
 }
