@@ -108,27 +108,35 @@ npm run serve
 
 ## Refreshing data
 
-The repo includes an ingestion script for rebuilding local SAM.gov data:
+The repo includes an ingestion script for rebuilding SAM.gov data:
 
 ```bash
 npm run ingest:sam
 ```
 
-The bulk CSV is large, so raw/generated local data stays under:
-
-```text
-data/sam/
-```
-
-and is ignored by git.
-
-If you regenerate map tiles, copy the compact tile file into:
+The script downloads the public SAM.gov Contract Opportunities bulk CSV, keeps the raw/generated development files under ignored `data/sam/`, and writes the compact browser payload to:
 
 ```text
 public/data/map-tiles.json
 ```
 
-before rebuilding the static site.
+The static site never fetches the 200MB bulk CSV in the browser and does not require a SAM.gov API key.
+
+### Automated refresh
+
+The checked-in workflow:
+
+```text
+.github/workflows/refresh-sam-data.yml
+```
+
+runs daily at `05:30 UTC`, after SAM.gov's overnight active-notice refresh window. It:
+
+1. downloads the latest public bulk CSV,
+2. regenerates `public/data/map-tiles.json` and `public/data/bulk-summary.json`,
+3. validates the static build with `GITHUB_PAGES=true npm run build`,
+4. commits the refreshed compact data if it changed, and
+5. deploys the refreshed static site to GitHub Pages.
 
 ## Deployment
 

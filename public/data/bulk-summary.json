@@ -1,6 +1,6 @@
 {
   "source": "sam.gov-bulk-csv",
-  "generatedAt": "2026-04-27T11:58:50.333829+00:00",
+  "generatedAt": "2026-04-27T23:57:30.349802+00:00",
   "csv": {
     "url": "https://s3.amazonaws.com/falextracts/Contract%20Opportunities/datagov/ContractOpportunitiesFullCSV.csv",
     "path": "data/sam/ContractOpportunitiesFullCSV.csv",
@@ -98,5 +98,11 @@
     "Justification and Approval (J&A)": 81,
     "Sale of Surplus Property": 17,
     "Consolidate/(Substantially) Bundle": 9
+  },
+  "mapTiles": {
+    "path": "public/data/map-tiles.json",
+    "bytes": 5053173,
+    "tileCount": 219,
+    "topAgencyCount": 12
   }
 }

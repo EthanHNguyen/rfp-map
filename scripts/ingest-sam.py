@@ -3,10 +3,12 @@
 
 Outputs:
   data/sam/ContractOpportunitiesFullCSV.csv         raw cached bulk CSV
-  data/sam/bulk-opportunities.json                  normalized active opportunities for server API
+  data/sam/bulk-opportunities.json                  normalized active opportunities for local inspection
   public/data/bulk-summary.json                     lightweight ingest metadata for the browser
+  public/data/map-tiles.json                        compact static payload used by the app
 
-No third-party dependencies. Designed for air-gap-friendly cached reruns.
+No third-party dependencies. Designed for air-gap-friendly cached reruns and
+GitHub Actions scheduled refreshes.
 """
 from __future__ import annotations
 
@@ -29,6 +31,10 @@ RAW_DIR = Path("data/sam")
 RAW_CSV = RAW_DIR / "ContractOpportunitiesFullCSV.csv"
 OUT_JSON = RAW_DIR / "bulk-opportunities.json"
 PUBLIC_SUMMARY = Path("public/data/bulk-summary.json")
+PUBLIC_MAP_TILES = Path("public/data/map-tiles.json")
+TOP_AGENCIES = 12
+TOP_THEMES_PER_AGENCY = 18
+TOP_OPPORTUNITIES_PER_THEME = 36
 
 THEMES = {
     "11": "Agriculture",
@@ -114,6 +120,158 @@ def theme_for(row: dict[str, str], title: str, description: str, agency: str, na
     if any(w in text for w in ["logistics", "transport", "shipping", "warehouse", "vehicle", "parts"]):
         return "Logistics"
     return "Other"
+
+
+def market_value_for(item: dict[str, Any]) -> int:
+    """Create a stable market-gravity estimate for map ranking.
+
+    SAM.gov opportunity notices usually do not publish a reliable value in the
+    public bulk CSV. The app intentionally presents approximate gravity, not an
+    official award value, so keep this deterministic and easy to reason about.
+    """
+    theme_base = {
+        "Construction": 5_200_000,
+        "Facilities": 3_400_000,
+        "Digital": 2_800_000,
+        "Professional": 2_400_000,
+        "Manufacturing": 1_800_000,
+        "Health": 1_600_000,
+        "Transport": 1_250_000,
+        "Energy": 1_100_000,
+        "Training": 950_000,
+        "Admin": 650_000,
+    }
+    notice_multiplier = {
+        "Solicitation": 1.2,
+        "Combined Synopsis/Solicitation": 1.0,
+        "Sources Sought": 0.75,
+        "Presolicitation": 0.85,
+        "Special Notice": 0.45,
+    }
+    seed = f"{item.get('id')}:{item.get('title')}:{item.get('agency')}:{item.get('naics')}"
+    digest = hashlib.sha256(seed.encode("utf-8", "ignore")).digest()
+    variance = 0.55 + (int.from_bytes(digest[:2], "big") / 65535) * 1.1
+    base = theme_base.get(str(item.get("theme", "")), 900_000)
+    multiplier = notice_multiplier.get(str(item.get("noticeType", "")), 0.9)
+    if item.get("urgency") == "hot":
+        multiplier *= 1.12
+    elif item.get("urgency") == "soon":
+        multiplier *= 1.04
+    return int(round((base * multiplier * variance) / 50_000) * 50_000)
+
+
+def tile_key(level: int, agency: str = "", theme: str = "") -> str:
+    return f"{level}|{agency}|{theme}"
+
+
+def node_sort_key(node: dict[str, Any]) -> tuple[int, int, str]:
+    return (-int(node["marketValue"]), -int(node["count"]), str(node["label"]))
+
+
+def summarize_group(items: list[dict[str, Any]], *, node_id: str, label: str, agency: str | None = None, theme: str | None = None, rank: int = 0) -> dict[str, Any]:
+    hot_count = sum(1 for item in items if item.get("urgency") == "hot")
+    soon_count = sum(1 for item in items if item.get("urgency") == "soon")
+    market_value = sum(int(item["marketValue"]) for item in items)
+    node: dict[str, Any] = {
+        "id": node_id,
+        "label": label,
+        "sublabel": f"{hot_count} hot · {soon_count} soon",
+        "count": len(items),
+        "marketValue": market_value,
+        "hotCount": hot_count,
+        "soonCount": soon_count,
+        "x": float(18 + ((rank * 37) % 64)),
+        "y": float(18 + ((rank * 23) % 64)),
+        "urgency": "hot" if hot_count else "soon" if soon_count else "watch",
+    }
+    if agency:
+        node["agency"] = agency
+    if theme:
+        node["theme"] = theme
+    return node
+
+
+def build_map_tiles(payload: dict[str, Any]) -> dict[str, Any]:
+    opportunities = payload["opportunities"]
+    for item in opportunities:
+        item["marketValue"] = market_value_for(item)
+
+    tiles: dict[str, Any] = {}
+    by_agency: dict[str, list[dict[str, Any]]] = {}
+    for item in opportunities:
+        by_agency.setdefault(item["shortAgency"], []).append(item)
+
+    agency_nodes = [
+        summarize_group(items, node_id=agency, label=agency, agency=agency, rank=index)
+        for index, (agency, items) in enumerate(by_agency.items())
+    ]
+    agency_nodes.sort(key=node_sort_key)
+    agency_nodes = agency_nodes[:TOP_AGENCIES]
+    tiles[tile_key(1)] = {
+        "level": 1,
+        "agency": None,
+        "theme": None,
+        "scopedCount": payload["activeRows"],
+        "nodes": agency_nodes,
+    }
+
+    for agency_node in agency_nodes:
+        agency = agency_node["agency"]
+        agency_items = by_agency[agency]
+        by_theme: dict[str, list[dict[str, Any]]] = {}
+        for item in agency_items:
+            by_theme.setdefault(item["theme"], []).append(item)
+
+        theme_nodes = [
+            summarize_group(items, node_id=theme, label=theme, agency=agency, theme=theme, rank=index)
+            for index, (theme, items) in enumerate(by_theme.items())
+        ]
+        theme_nodes.sort(key=node_sort_key)
+        theme_nodes = theme_nodes[:TOP_THEMES_PER_AGENCY]
+        tiles[tile_key(2, agency)] = {
+            "level": 2,
+            "agency": agency,
+            "theme": None,
+            "scopedCount": len(agency_items),
+            "nodes": theme_nodes,
+        }
+
+        for theme_node in theme_nodes:
+            theme = theme_node["theme"]
+            theme_items = sorted(by_theme[theme], key=lambda item: (-int(item["marketValue"]), str(item["title"])))[:TOP_OPPORTUNITIES_PER_THEME]
+            opp_nodes = []
+            for item in theme_items:
+                public_item = {k: v for k, v in item.items() if k != "marketValue"}
+                opp_nodes.append({
+                    "id": item["id"],
+                    "label": item["title"],
+                    "sublabel": f"{agency} · {theme}",
+                    "count": 1,
+                    "marketValue": item["marketValue"],
+                    "hotCount": 1 if item.get("urgency") == "hot" else 0,
+                    "soonCount": 1 if item.get("urgency") == "soon" else 0,
+                    "x": item["x"],
+                    "y": item["y"],
+                    "urgency": item["urgency"],
+                    "agency": agency,
+                    "theme": theme,
+                    "opportunity": public_item,
+                })
+            tiles[tile_key(3, agency, theme)] = {
+                "level": 3,
+                "agency": agency,
+                "theme": theme,
+                "scopedCount": len(by_theme[theme]),
+                "nodes": opp_nodes,
+            }
+
+    return {
+        "source": payload["source"],
+        "generatedAt": payload["generatedAt"],
+        "totalRows": payload["totalRows"],
+        "activeRows": payload["activeRows"],
+        "tiles": tiles,
+    }
 
 
 def normalize(row: dict[str, str]) -> dict[str, Any] | None:
@@ -230,8 +388,19 @@ def ingest(csv_path: Path, out_path: Path, max_records: int | None) -> dict[str,
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
 
+    map_tiles = build_map_tiles(payload)
+    PUBLIC_MAP_TILES.parent.mkdir(parents=True, exist_ok=True)
+    PUBLIC_MAP_TILES.write_text(json.dumps(map_tiles, separators=(",", ":")), encoding="utf-8")
+
     PUBLIC_SUMMARY.parent.mkdir(parents=True, exist_ok=True)
-    PUBLIC_SUMMARY.write_text(json.dumps({k: v for k, v in payload.items() if k != "opportunities"}, indent=2), encoding="utf-8")
+    summary = {k: v for k, v in payload.items() if k != "opportunities"}
+    summary["mapTiles"] = {
+        "path": str(PUBLIC_MAP_TILES),
+        "bytes": PUBLIC_MAP_TILES.stat().st_size,
+        "tileCount": len(map_tiles["tiles"]),
+        "topAgencyCount": len(map_tiles["tiles"][tile_key(1)]["nodes"]),
+    }
+    PUBLIC_SUMMARY.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     return payload
 
 
@@ -251,7 +420,8 @@ def main() -> int:
         "opportunitiesReturned": payload["opportunitiesReturned"],
         "isSampled": payload["isSampled"],
         "topThemes": list(payload["themeCounts"].items())[:8],
-        "output": str(OUT_JSON),
+        "opportunitiesOutput": str(OUT_JSON),
+        "mapTilesOutput": str(PUBLIC_MAP_TILES),
     }, indent=2))
     return 0
 
