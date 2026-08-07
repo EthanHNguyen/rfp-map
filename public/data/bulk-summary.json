@@ -1,6 +1,6 @@
 {
   "source": "sam.gov-bulk-csv",
-  "generatedAt": "2026-08-06T08:00:24.838580+00:00",
+  "generatedAt": "2026-08-07T06:45:37.428474+00:00",
   "csv": {
     "url": "https://s3.amazonaws.com/falextracts/Contract%20Opportunities/datagov/ContractOpportunitiesFullCSV.csv",
     "path": "data/sam/ContractOpportunitiesFullCSV.csv",
